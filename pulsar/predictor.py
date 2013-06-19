@@ -1,11 +1,12 @@
+# -*- coding: utf-8 -*-
 """Read in and use tempo1 polyco files (tempo2 predict to come).
 
 Examples
 --------
->>> psr_polyco = predictor.polyco('polyco_new.dat')
+>>> psr_polyco = predictor.Polyco('polyco_new.dat')
 >>> predicted_phase = psr_polyco(mjd_array)
 
->>> index  = psr_polyco.searchindex(my_start_mjd)
+>>> index  = psr_polyco.searchclosest(my_start_mjd)
 >>> phasepol = psr_polyco.phasepol(index, rphase='fraction')
 
 Notes
@@ -46,10 +47,10 @@ from numpy.polynomial import Polynomial
 from astropy.table import Table
 
 
-class polyco(Table):
+class Polyco(Table):
     def __init__(self, name):
         """Read in polyco file as Table, and set up class."""
-        super(polyco,self).__init__(polyco2table(name))
+        super(Polyco,self).__init__(polyco2table(name))
 
     def __call__(self, mjd_in, index=None, rphase=None):
         """Predict phases for given mjd (array)
