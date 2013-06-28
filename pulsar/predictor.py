@@ -52,8 +52,8 @@ class Polyco(Table):
         """Read in polyco file as Table, and set up class."""
         super(Polyco,self).__init__(polyco2table(name))
 
-    def __call__(self, mjd_in, index=None, rphase=None):
-        """Predict phases for given mjd (array)
+    def __call__(self, mjd_in, index=None, rphase=None, deriv=0):
+        """Predict phase or frequency (derivatives) for given mjd (array)
 
         Parameters
         ----------
@@ -66,6 +66,8 @@ class Polyco(Table):
             phase zero points for relevant polyco's; if None, use those
             stored in polyco.  (Those are typically large, so one looses
             some precision.)  Can also set 'fraction' or give the zero point.
+        deriv : int
+            Derivative to return (Default=0=phase, 1=frequency, etc.)
         """
         mjd = np.atleast_1d(mjd_in)
         if index is None:
@@ -76,21 +78,71 @@ class Polyco(Table):
         if np.any(np.abs(mjd - self['mjd_mid'][i])*1440 > self['span']/2):
             raise ValueError('(some) MJD outside of polyco range')
 
-        phases = np.zeros_like(mjd)
+        results = np.zeros_like(mjd)
         for j in set(i):
             in_set = i == j
-            phasepol = self.phasepol(j, rphase)
-            phases[in_set] = phasepol(mjd[in_set])
+            polynomial = self.polynomial(j, rphase, deriv)
+            results[in_set] = polynomial(mjd[in_set])
 
-        return phases
+        return results
+
+    def polynomial(self, index, rphase=None, deriv=0):
+        """Prediction polynomial set up for times in MJD
+
+        Parameters
+        ----------
+        index : int or float
+            index into the polyco table (or MJD for finding closest)
+        rphase : None or 'fraction' or float
+            phase zero point; if None, use the one stored in polyco.
+            (Those are typically large, so one looses some precision.)
+            Can also set 'fraction' to use the stored one modulo 1, which is
+            fine for folding, but breaks phase continuity between sets.
+        deriv : int
+            derivative of phase to take (1=frequency, 2=fdot, etc.); default 0
+
+        Returns
+        -------
+        polynomial : Polynomial
+            set up for MJDs between mjd_mid ± span
+
+        Notes
+        -----
+        Units for the polynomial are cycles/second**deriv.  Taking a derivative
+        outside will be per day (e.g., self.polynomial(1).deriv() gives
+        frequencies in cycles/day)
+        """
+        try:
+            window = np.array([-1, 1]) * self['span'][index]/2
+        except:
+            # assume index is really a MJD
+            index = self.searchclosest(index)
+            window = np.array([-1, 1]) * self['span'][index]/2
+
+        # span is in minutes -> 1/1440 of a day
+        polynomial = Polynomial(self['coeff'][index],
+                                window/1440.+self['mjd_mid'][index], window)
+        polynomial.coef[1] += self['f0'][index]*60.
+        if deriv == 0:
+            if rphase is None:
+                polynomial.coef[0] += self['rphase'][index]
+            elif rphase == 'fraction':
+                polynomial.coef[0] += self['rphase'][index] % 1
+            else:
+                polynomial.coef[0] = rphase
+        else:
+            polynomial = polynomial.deriv(deriv)
+            polynomial.coef /= 86400**deriv
+
+        return polynomial
 
     def phasepol(self, index, rphase=None):
         """Phase prediction polynomial set up for times in MJD
 
         Parameters
         ----------
-        index : int
-            index into the polyco table
+        index : int or float
+            index into the polyco table (or MJD for finding closest)
         rphase : None or 'fraction' or float
             phase zero point; if None, use the one stored in polyco.
             (Those are typically large, so one looses some precision.)
@@ -102,18 +154,22 @@ class Polyco(Table):
         phasepol : Polynomial
             set up for MJDs between mjd_mid ± span
         """
-        domain = np.array([-1, 1]) * self['span'][index]/2
-        # span is in minutes -> 1/1440 of a day
-        phasepol = Polynomial(self['coeff'][index],
-                              domain/1440.+self['mjd_mid'][index], domain)
-        if rphase is None:
-            phasepol.coef[0] += self['rphase'][index]
-        elif rphase in 'fraction':
-            phasepol.coef[0] += self['rphase'][index] % 1
-        else:
-            phasepol.coef[0] = rphase
-        phasepol.coef[1] += self['f0'][index]*60.
-        return phasepol
+        return self.polynomial(self, index, rphase)
+
+    def fpol(self, index):
+        """Frequency prediction polynomial set up for times in MJD
+
+        Parameters
+        ----------
+        index : int
+            index into the polyco table
+
+        Returns
+        -------
+        freqpol : Polynomial
+            set up for MJDs between mjd_mid ± span
+        """
+        return self.polynomial(self, index, deriv=1)
 
     def searchclosest(self, mjd):
         """Find index to polyco that is closest in time to (set of) MJD"""

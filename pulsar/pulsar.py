@@ -15,7 +15,11 @@ class ELL1Ephemeris(dict):
         self.fix = f
 
     def evaluate(self, par, mjd, t0par='TASC', integrate=False):
-        parpol = Polynomial((self[par], self.get(par+'DOT', 0.)))
+        if par == 'F':
+            parpol = Polynomial((self['F'], self.get('F1', 0.),
+                                 self.get('F2',0.), self.get('F3',0.)))
+        else:
+            parpol = Polynomial((self[par], self.get(par+'DOT', 0.)))
         if integrate:
             parpol = parpol.integ()
         dt = (mjd-self[t0par])*24.*3600.
@@ -57,7 +61,7 @@ class ELL1Ephemeris(dict):
         return np.array([ca*cd, sa*cd, sd])
 
 
-def par2dict(name, substitutions={'F0': 'F', 'F1': 'FDOT', 'F2': 'FDOT2',
+def par2dict(name, substitutions={'DM1': 'DMDOT',
                                   'PMRA': 'RAJDOT', 'PMDEC': 'DECJDOT'}):
     """Read in a TEMPO .par file and convert to a dictionary.
 
