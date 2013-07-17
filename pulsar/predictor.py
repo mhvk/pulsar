@@ -37,14 +37,23 @@ The pulse phase and frequency at time T are then calculated as:
 DT = (T-TMID)*1440
 PHASE = RPHASE + DT*60*F0 + COEFF(1) + DT*COEFF(2) + DT^2*COEFF(3) + ....
 FREQ(Hz) = F0 + (1/60)*(COEFF(2) + 2*DT*COEFF(3) + 3*DT^2*COEFF(4) + ....)
+
+Example tempo2 call to produce one:
+
+tempo2 -tempo1 -f ~/projects/scintellometry/timing/ForMarten.par \
+       -polyco "56429 56430 300 12 8 gmrt 327.0"
+
+
 """
 
-from __future__ import division
+from __future__ import division, print_function
 
 from collections import OrderedDict
 import numpy as np
 from numpy.polynomial import Polynomial
 from astropy.table import Table
+import astropy.units as u
+from astropy.time import Time, TimeDelta
 
 
 class Polyco(Table):
@@ -52,7 +61,7 @@ class Polyco(Table):
         """Read in polyco file as Table, and set up class."""
         super(Polyco,self).__init__(polyco2table(name))
 
-    def __call__(self, mjd_in, index=None, rphase=None, deriv=0):
+    def __call__(self, time, index=None, rphase=None, deriv=0, time_unit=None):
         """Predict phase or frequency (derivatives) for given mjd (array)
 
         Parameters
@@ -69,24 +78,31 @@ class Polyco(Table):
         deriv : int
             Derivative to return (Default=0=phase, 1=frequency, etc.)
         """
-        mjd = np.atleast_1d(mjd_in)
+        time_unit = time_unit or u.s
+        if not hasattr(time, 'mjd'):
+            time = Time(time, format='mjd', scale='utc')
         if index is None:
-            i = self.searchclosest(mjd)
-        else:
-            i = np.atleast_1d(index)
+            index = self.searchclosest(time)
+        i = np.atleast_1d(index)
 
-        if np.any(np.abs(mjd - self['mjd_mid'][i])*1440 > self['span']/2):
+        if np.any(np.abs(time.mjd - self['mjd_mid'][i])*1440 > self['span']/2):
             raise ValueError('(some) MJD outside of polyco range')
 
-        results = np.zeros_like(mjd)
+        results = np.zeros(len(time)) * u.cycle / time_unit**deriv
         for j in set(i):
             in_set = i == j
             polynomial = self.polynomial(j, rphase, deriv)
-            results[in_set] = polynomial(mjd[in_set])
+            dt_min = np.atleast_1d((time - Time(self['mjd_mid'][j],
+                                                format='mjd', scale='utc')
+                                    ).jd)[in_set] * 1440.
+            results[in_set] = (polynomial(dt_min) * u.cycle / u.min**deriv
+                               ).to(u.cycle / time_unit**deriv)
 
-        return results
+        return results if len(results)>1 else results[0]
 
-    def polynomial(self, index, rphase=None, deriv=0):
+    def polynomial(self, index, rphase=None, deriv=0,
+                   t0=None, time_unit=u.min, out_unit=None,
+                   convert=False):
         """Prediction polynomial set up for times in MJD
 
         Parameters
@@ -112,17 +128,20 @@ class Polyco(Table):
         outside will be per day (e.g., self.polynomial(1).deriv() gives
         frequencies in cycles/day)
         """
-        try:
-            window = np.array([-1, 1]) * self['span'][index]/2
-        except:
-            # assume index is really a MJD
-            index = self.searchclosest(index)
-            window = np.array([-1, 1]) * self['span'][index]/2
 
-        # span is in minutes -> 1/1440 of a day
+        out_unit = out_unit or time_unit
+
+        try:
+            window = np.array([-1, 1]) * self['span'][index]/2 * u.min
+        except(IndexError, TypeError):
+            # assume index is really a Time or MJD
+            index = self.searchclosest(index)
+            window = np.array([-1, 1]) * self['span'][index]/2 * u.min
+
         polynomial = Polynomial(self['coeff'][index],
-                                window/1440.+self['mjd_mid'][index], window)
+                                window.value, window.value)
         polynomial.coef[1] += self['f0'][index]*60.
+
         if deriv == 0:
             if rphase is None:
                 polynomial.coef[0] += self['rphase'][index]
@@ -132,11 +151,25 @@ class Polyco(Table):
                 polynomial.coef[0] = rphase
         else:
             polynomial = polynomial.deriv(deriv)
-            polynomial.coef /= 86400**deriv
+            polynomial.coef /= u.min.to(out_unit)**deriv
 
-        return polynomial
+        if t0 is None:
+            dt = 0. * time_unit
+        elif t0 == 0:
+            dt = (-self['mjd_mid'][index] * u.day).to(time_unit)
+        else:
+            dt = ((t0 - Time(self['mjd_mid'][index], format='mjd', scale='utc')
+                   ).jd * u.day).to(time_unit)
 
-    def phasepol(self, index, rphase=None):
+        polynomial.domain = (window.to(time_unit) - dt).value
+
+        if convert:
+            return polynomial.convert()
+        else:
+            return polynomial
+
+    def phasepol(self, index, rphase=None, t0=0., time_unit=u.day,
+                 convert=False):
         """Phase prediction polynomial set up for times in MJD
 
         Parameters
@@ -154,9 +187,10 @@ class Polyco(Table):
         phasepol : Polynomial
             set up for MJDs between mjd_mid ± span
         """
-        return self.polynomial(self, index, rphase)
+        return self.polynomial(index, rphase, t0=t0, time_unit=time_unit,
+                               convert=convert)
 
-    def fpol(self, index):
+    def fpol(self, index, t0=0., time_unit=u.day, convert=False):
         """Frequency prediction polynomial set up for times in MJD
 
         Parameters
@@ -169,10 +203,13 @@ class Polyco(Table):
         freqpol : Polynomial
             set up for MJDs between mjd_mid ± span
         """
-        return self.polynomial(self, index, deriv=1)
+        return self.polynomial(index, deriv=1.,
+                               t0=t0, time_unit=time_unit, out_unit=u.s,
+                               convert=convert)
 
     def searchclosest(self, mjd):
-        """Find index to polyco that is closest in time to (set of) MJD"""
+        """Find index to polyco that is closest in time to (set of) Time/MJD"""
+        mjd = getattr(mjd, 'mjd', mjd)
         i = np.clip(np.searchsorted(self['mjd_mid'], mjd), 1, len(self)-1)
         i -= mjd-self['mjd_mid'][i-1] < self['mjd_mid'][i]-mjd
         return i
