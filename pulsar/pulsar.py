@@ -4,26 +4,63 @@ from astropy.coordinates.angles import Angle
 import astropy.units as u
 
 
-class ELL1Ephemeris(dict):
+class Ephemeris(dict):
     """Empheris for ELL1 model"""
 
-    def __init__(self, name='psrj1959.par'):
+    def __init__(self, name):
         d, e, f = par2dict(name)
         # make dictionary
         dict.__init__(self, d)
         self.err = e
         self.fix = f
 
-    def evaluate(self, par, mjd, t0par='TASC', integrate=False):
+    def evaluate(self, par, mjd, t0par=None, integrate=False):
+        """Evaluate 'par' at given MJD(s), with zero point t0par
+
+        Parameters
+        ----------
+        par : string
+            key into dictionary = parameter to evaluate.  Takes into
+            account possible par+'DOT' (for 'F': F0, F1, F2, F3)
+        mjd : float or Time object
+            MJD at which to evaluate (or Time with .tdb.mjd attribute)
+        t0par : string or None
+            key into dictionary with zero point for par
+            default: None -> PEPOCH for 'F', 'TASC' for all others
+        integrate : bool
+            Whether to integrate the polynomial (e.g., to get mean
+            anomaly out of 'FB' or pulse phase out of 'F')
+        """
         if par == 'F':
-            parpol = Polynomial((self['F'], self.get('F1', 0.),
+            t0par = t0par or 'PEPOCH'
+            parpol = Polynomial((self['F0'], self.get('F1', 0.),
                                  self.get('F2',0.), self.get('F3',0.)))
         else:
+            t0par = t0par or 'TASC'
             parpol = Polynomial((self[par], self.get(par+'DOT', 0.)))
+
         if integrate:
             parpol = parpol.integ()
-        dt = (mjd-self[t0par])*24.*3600.
-        return parpol(dt)
+
+        # given time can be Time object
+        if hasattr(mjd, 'tdb'):
+            mjd = mjd.tdb.mjd
+
+        return parpol((mjd - self[t0par]) * 86400.)
+
+    def pos(self, mjd):
+        """Position including proper motion (to linear order, bad near pole)"""
+        ra = np.deg2rad(self.evaluate('RAJ', mjd, 'POSEPOCH'))
+        dec = np.deg2rad(self.evaluate('DECJ', mjd, 'POSEPOCH'))
+        ca = np.cos(ra)
+        sa = np.sin(ra)
+        cd = np.cos(dec)
+        sd = np.sin(dec)
+        return np.array([ca*cd, sa*cd, sd])
+
+
+class ELL1Ephemeris(Ephemeris):
+    """Ephemeris for ELL1 model"""
 
     def mean_anomaly(self, mjd):
         return 2.*np.pi*self.evaluate('FB', mjd, integrate=True)
@@ -49,16 +86,6 @@ class ELL1Ephemeris(dict):
         e1, e2 = self['EPS1'], self['EPS2']
         vrad = kcirc*(np.cos(ma)+e1*np.sin(2*ma)+e2*np.cos(2*ma))
         return vrad
-
-    def pos(self, mjd):
-        """Position including proper motion (to linear order, bad near pole)"""
-        ra = np.deg2rad(self.evaluate('RAJ', mjd, 'POSEPOCH'))
-        dec = np.deg2rad(self.evaluate('DECJ', mjd, 'POSEPOCH'))
-        ca = np.cos(ra)
-        sa = np.sin(ra)
-        cd = np.cos(dec)
-        sd = np.sin(dec)
-        return np.array([ca*cd, sa*cd, sd])
 
 
 def par2dict(name, substitutions={'DM1': 'DMDOT',
@@ -98,9 +125,13 @@ def par2dict(name, substitutions={'DM1': 'DMDOT',
                 d[item] = value
             except ValueError:
                 d[item] = parts[1]
-            if len(parts) == 4:
-                f[item] = int(parts[2])
-                e[item] = float(parts[3].lower().replace('d', 'e'))
+            if len(parts) > 2:
+                # for numbers last item is the corresponding uncertainty
+                e[item] = float(parts[-1].lower().replace('d', 'e'))
+                # for tempo output, middle number is whether parameter was
+                # fixed or not; for ATNF PSRCAT, this is absent
+                f[item] = int(parts[2]) if len(parts) == 4 else 0
+
         # convert RA, DEC from strings (hh:mm:ss.sss, ddd:mm:ss.ss) to degrees
         d['RAJ'] = Angle(d['RAJ'], u.hr).degrees
         e['RAJ'] = e['RAJ']/15./3600.
@@ -115,7 +146,7 @@ def par2dict(name, substitutions={'DM1': 'DMDOT',
             d['DECJDOT'] *= conv
             e['DECJDOT'] *= conv
 
-        if 'FB' not in d:
+        if 'FB' not in d and 'PB' in d:
             pb = d.pop('PB')
             d['FB'] = 1./(pb*24.*3600.)
             e['FB'] = e.pop('PB')/pb*d['FB']
@@ -124,4 +155,5 @@ def par2dict(name, substitutions={'DM1': 'DMDOT',
                 d['FBDOT'] = -d.pop('PBDOT')/pb*d['FB']
                 e['FBDOT'] = e.pop('PBDOT')/pb*d['FB']
                 f['FBDOT'] = f.pop('PBDOT')
+
     return d, e, f
