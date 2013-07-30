@@ -53,7 +53,7 @@ import numpy as np
 from numpy.polynomial import Polynomial
 from astropy.table import Table
 import astropy.units as u
-from astropy.time import Time, TimeDelta
+from astropy.time import Time
 
 
 class Polyco(Table):
@@ -83,22 +83,30 @@ class Polyco(Table):
             time = Time(time, format='mjd', scale='utc')
         if index is None:
             index = self.searchclosest(time)
-        i = np.atleast_1d(index)
 
-        if np.any(np.abs(time.mjd - self['mjd_mid'][i])*1440 > self['span']/2):
+        if np.any(np.abs(time.mjd - self['mjd_mid'][index])*1440 >
+                  self['span'][index]/2):
             raise ValueError('(some) MJD outside of polyco range')
 
-        results = np.zeros(len(time)) * u.cycle / time_unit**deriv
-        for j in set(i):
-            in_set = i == j
-            polynomial = self.polynomial(j, rphase, deriv)
-            dt_min = np.atleast_1d((time - Time(self['mjd_mid'][j],
-                                                format='mjd', scale='utc')
-                                    ).jd)[in_set] * 1440.
-            results[in_set] = (polynomial(dt_min) * u.cycle / u.min**deriv
-                               ).to(u.cycle / time_unit**deriv)
-
-        return results if len(results)>1 else results[0]
+        if time.is_scalar:
+            polynomial = self.polynomial(index, rphase, deriv)
+            dt = (time -
+                  Time(self['mjd_mid'][index], format='mjd', scale='utc')
+                 ).jd * u.day
+            return (polynomial(dt.to(u.min).value) *
+                    u.cycle / u.min**deriv).to(u.cycle / time_unit**deriv)
+        else:
+            results = np.zeros(len(time)) * u.cycle / time_unit**deriv
+            for j in set(index):
+                in_set = index == j
+                polynomial = self.polynomial(j, rphase, deriv)
+                dt = (time[in_set] -
+                      Time(self['mjd_mid'][j], format='mjd', scale='utc')
+                     ).jd * u.day
+                results[in_set] = (polynomial(dt.to(u.min).value) *
+                                   u.cycle / u.min**deriv
+                                  ).to(u.cycle / time_unit**deriv)
+                return results
 
     def polynomial(self, index, rphase=None, deriv=0,
                    t0=None, time_unit=u.min, out_unit=None,
@@ -155,7 +163,7 @@ class Polyco(Table):
 
         if t0 is None:
             dt = 0. * time_unit
-        elif t0 == 0:
+        elif not hasattr(t0, 'jd1') and t0 == 0:
             dt = (-self['mjd_mid'][index] * u.day).to(time_unit)
         else:
             dt = ((t0 - Time(self['mjd_mid'][index], format='mjd', scale='utc')
