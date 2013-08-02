@@ -4,10 +4,13 @@
 Examples
 --------
 >>> psr_polyco = predictor.Polyco('polyco_new.dat')
->>> predicted_phase = psr_polyco(mjd_array)
+>>> predicted_phase = psr_polyco(time)
 
->>> index  = psr_polyco.searchclosest(my_start_mjd)
->>> phasepol = psr_polyco.phasepol(index, rphase='fraction')
+>>> phasepol = psr_polyco.phasepol(Timeindex, rphase='fraction')
+
+For use with folding codes with times since some start time t0 in seconds:
+
+>>> psr_polyco.phasepol(t0, 'fraction', t0=t0, time_unit=u.second, convert=True)
 
 Notes
 -----
@@ -40,10 +43,17 @@ FREQ(Hz) = F0 + (1/60)*(COEFF(2) + 2*DT*COEFF(3) + 3*DT^2*COEFF(4) + ....)
 
 Example tempo2 call to produce one:
 
-tempo2 -tempo1 -f ~/projects/scintellometry/timing/ForMarten.par \
-       -polyco "56429 56430 300 12 8 gmrt 327.0"
+tempo2 -tempo1 \
+    -f ~/packages/scintellometry/scintellometry/ephemerides/psrb1957+20.par \
+    -polyco "56499 56500 300 12 12 aro 150.0"
 
-
+#            MJDstart
+#                  MJDend
+#                        #min for which polynomial is fit
+#                            #deg of polynomial
+#                               #max HA (12 is continuous)
+#                                  Observatory
+#                                     Frequency
 """
 
 from __future__ import division, print_function
