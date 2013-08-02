@@ -116,6 +116,8 @@ def par2dict(name, substitutions={'DM1': 'DMDOT',
     f = {}
     with open(name, 'r') as parfile:
         for lin in parfile:
+            if lin[0] == '#':
+                continue
             parts = lin.split()
             item = parts[0].upper()
             item = substitutions.get(item, item)
