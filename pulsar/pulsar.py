@@ -135,9 +135,9 @@ def par2dict(name, substitutions={'DM1': 'DMDOT',
                 f[item] = int(parts[2]) if len(parts) == 4 else 0
 
         # convert RA, DEC from strings (hh:mm:ss.sss, ddd:mm:ss.ss) to degrees
-        d['RAJ'] = Angle(d['RAJ'], u.hr).degrees
+        d['RAJ'] = Angle(d['RAJ'], u.hr).degree
         e['RAJ'] = e['RAJ']/15./3600.
-        d['DECJ'] = Angle(d['DECJ'], u.deg).degrees
+        d['DECJ'] = Angle(d['DECJ'], u.deg).degree
         e['DECJ'] = e['DECJ']/3600.
         if 'RAJDOT' in d and 'DECJDOT' in d:
             # convert to degrees/s

@@ -76,33 +76,46 @@ class Polyco(Table):
 
         Parameters
         ----------
-        mjd_in : float (array)
-            MJD's for which phases are to be generated
-        index : None or int (array)
-            indices into Table for corresponding polyco's; if None,
-            will be found.  (can be given for speed up)
+        mjd_in : Time or `float` (array)
+            Time instances of MJD's for which phases are to be generated.
+            If `float`, assumed to be MJD (NOTE: less precise!)
+        index : int (array), None, or float/Time
+            indices into Table for corresponding polyco's; if None, it will be
+            deterined from `mjd_in` (giving an explicit index can help speed up
+            the evaluation).  If not an index or `None`, it will be used to
+            find the index. Hence if one has a large array if closely spaced
+            times, one can pass in a single element to speed matters up.
         rphase : None or 'fraction' or float (array)
             phase zero points for relevant polyco's; if None, use those
             stored in polyco.  (Those are typically large, so one looses
             some precision.)  Can also set 'fraction' or give the zero point.
         deriv : int
             Derivative to return (Default=0=phase, 1=frequency, etc.)
+        time_unit : Unit
+            Unit of time in which derivatives are expressed (Default: second)
+
+        Returns
+        -------
+        phase / time**deriv
+            In units of
         """
         time_unit = time_unit or u.s
         if not hasattr(time, 'mjd'):
             time = Time(time, format='mjd', scale='utc')
-        if index is None:
+        try:  # This also catches index=None
+            index = index.__index__()
+        except (AttributeError, TypeError):
             index = self.searchclosest(time)
 
-        if np.any(np.abs(time.mjd - self['mjd_mid'][index])*1440 >
-                  self['span'][index]/2):
+        mjd_mid = self['mjd_mid'][index]
+
+        if np.any(np.abs(time.mjd - mjd_mid)*1440 > self['span'][index]/2):
             raise ValueError('(some) MJD outside of polyco range')
 
-        if time.is_scalar:
+        if time.isscalar:
             polynomial = self.polynomial(index, rphase, deriv)
-            dt = (time -
-                  Time(self['mjd_mid'][index], format='mjd', scale='utc')
-                 ).jd * u.day
+            dt = (time - Time(self['mjd_mid'][index],
+                              format='mjd', scale='utc'))
             return (polynomial(dt.to(u.min).value) *
                     u.cycle / u.min**deriv).to(u.cycle / time_unit**deriv)
         else:
@@ -110,13 +123,11 @@ class Polyco(Table):
             for j in set(index):
                 in_set = index == j
                 polynomial = self.polynomial(j, rphase, deriv)
-                dt = (time[in_set] -
-                      Time(self['mjd_mid'][j], format='mjd', scale='utc')
-                     ).jd * u.day
+                dt = (time[in_set] - Time(self['mjd_mid'][j],
+                                          format='mjd', scale='utc'))
                 results[in_set] = (polynomial(dt.to(u.min).value) *
-                                   u.cycle / u.min**deriv
-                                  ).to(u.cycle / time_unit**deriv)
-                return results
+                                   u.cycle / u.min**deriv)
+            return results
 
     def polynomial(self, index, rphase=None, deriv=0,
                    t0=None, time_unit=u.min, out_unit=None,
@@ -131,7 +142,7 @@ class Polyco(Table):
             phase zero point; if None, use the one stored in polyco.
             (Those are typically large, so one looses some precision.)
             Can also set 'fraction' to use the stored one modulo 1, which is
-            fine for folding, but breaks phase continuity between sets.
+            fine for folding, but breaks cycle count continuity between sets.
         deriv : int
             derivative of phase to take (1=frequency, 2=fdot, etc.); default 0
 
