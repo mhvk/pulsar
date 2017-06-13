@@ -150,11 +150,10 @@ class Polyco(Table):
         out_unit = out_unit or time_unit
 
         try:
-            window = np.array([-1, 1]) * self['span'][index]/2 * u.min
-        except(IndexError, TypeError):
-            # assume index is really a Time or MJD
+            index = index.__index__()
+        except (AttributeError, TypeError):
             index = self.searchclosest(index)
-            window = np.array([-1, 1]) * self['span'][index]/2 * u.min
+        window = np.array([-1, 1]) * self['span'][index]/2 * u.min
 
         polynomial = Polynomial(self['coeff'][index],
                                 window.value, window.value)
